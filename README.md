@@ -1,47 +1,46 @@
-# 🚚 AsanBar — سیستم لجستیک هوشمند
+# 🚚 AsanBar — Smart Logistics System
 
-پروژه نمونه Production-Level با FastAPI + PostgreSQL + Redis
+Production-grade sample project built with FastAPI + PostgreSQL + Redis
 
 ## Stack
 - **FastAPI** — async REST API
-- **PostgreSQL** — دیتابیس اصلی
-- **Redis** — قفل توزیع‌شده + موقعیت راننده (GEO)
+- **PostgreSQL** — primary database
+- **Redis** — distributed locking + driver geolocation (GEO)
 - **SQLAlchemy (async)** — ORM
-- **Alembic** — migration
-- **Celery** — background tasks
-- **pytest** — تست
+- **Alembic** — database migrations
+- **Celery** — background task processing
+- **pytest** — testing
 
-## راه‌اندازی سریع
+## Quick Start
 
 ```bash
-# 1. کپی env
+# 1. Copy environment variables
 cp .env.example .env
 
-# 2. اجرا با Docker
+# 2. Run with Docker
 docker-compose up -d
 
-# 3. اعمال migration
+# 3. Run migrations
 docker-compose exec api alembic upgrade head
 
-# 4. بارگذاری داده اولیه
+# 4. Load seed data
 docker-compose exec api python scripts/seed.py
-```
 
 API Docs: http://localhost:8000/docs
-
-## اجرا بدون Docker (توسعه)
+```
+Development (without Docker)
 
 ```bash
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# PostgreSQL و Redis باید در حال اجرا باشند
+# Ensure PostgreSQL and Redis are running locally
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-## ساختار پروژه
+Project Structure
 
 ```
 asanbar/
@@ -62,13 +61,13 @@ asanbar/
 
 ## API Endpoints
 
-| Method | Path | توضیح |
+| Method | Path | Description |
 |--------|------|-------|
-| POST | /api/v1/auth/register | ثبت‌نام |
-| POST | /api/v1/auth/login | ورود |
-| POST | /api/v1/orders | ثبت سفارش |
-| GET | /api/v1/orders/{id} | جزئیات سفارش |
-| POST | /api/v1/orders/{id}/assign | تخصیص راننده |
-| PUT | /api/v1/drivers/location | آپدیت موقعیت راننده |
-| GET | /api/v1/drivers/nearby | راننده‌های نزدیک |
+| POST | /api/v1/auth/register | User registration |
+| POST | /api/v1/auth/login | User login |
+| POST | /api/v1/orders | Create a new order |
+| GET | /api/v1/orders/{id} | Get order details |
+| POST | /api/v1/orders/{id}/assign | Assign a driver to an order |
+| PUT | /api/v1/drivers/location | Update driver location |
+| GET | /api/v1/drivers/nearby | Find nearby drivers |
 | GET | /api/v1/health | Health check |
