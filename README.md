@@ -25,10 +25,10 @@ docker-compose exec api alembic upgrade head
 
 # 4. Load seed data
 docker-compose exec api python scripts/seed.py
-
-API Docs: http://localhost:8000/docs
 ```
-Development (without Docker)
+API Docs: http://localhost:8000/docs
+
+## Development (without Docker)
 
 ```bash
 python -m venv venv
@@ -40,7 +40,7 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Project Structure
+## Project Structure
 
 ```
 asanbar/
