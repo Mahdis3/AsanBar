@@ -1,0 +1,412 @@
+app/
+├── main.py              ← entry point (lifespan, middleware, routers, error handlers)
+├── core/
+│   ├── config.py        ← Settings با pydantic-settings
+│   ├── security.py      ← JWT + bcrypt
+│   ├── exceptions.py    ← Custom exceptions + HTTP mapping
+│   └── logging.py       ← Structured logging با structlog
+├── db/
+│   ├── session.py       ← Async SQLAlchemy + connection pool
+│   └── redis.py         ← Redis connection pool
+├── models/              ← User, Driver, Order (با Index‌های بهینه)
+├── schemas/             ← Pydantic schemas + validation
+├── services/
+│   ├── auth_service.py       ← register / login / refresh
+│   ├── order_service.py      ← CRUD + state machine
+│   ├── driver_service.py     ← پروفایل + availability
+│   └── assignment_service.py ← Redis GEO + distributed lock + retry
+├── api/v1/endpoints/    ← auth, orders, drivers
+└── middleware/          ← Rate limiting (per role) + request logging
+
+
+---------------------------------------------------------------------------------
+
+┌─────────────────────────────────────────────────────┐
+│                    CLIENT                           │
+│              (Vue.js / Next.js / React.js)                     │
+│         HTTP Request می‌فرسته و Response می‌گیره    │
+└─────────────────────┬───────────────────────────────┘
+                      │ HTTP
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│                 API LAYER                           │
+│         app/api/v1/endpoints/                       │
+│                                                     │
+│  - فقط HTTP می‌فهمه                                 │
+│  - Request رو می‌گیره، validate می‌کنه              │
+│  - Service رو صدا می‌زنه                            │
+│  - AppError رو به HTTPException تبدیل می‌کنه        │
+│                                                     │
+│  orders.py / drivers.py / auth.py                  │
+└─────────────────────┬───────────────────────────────┘
+                      │ Python function call
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│               SERVICE LAYER                         │
+│              app/services/                          │
+│                                                     │
+│  - business logic اینجاست                          │
+│  - نمی‌دونه HTTP چیه                               │
+│  - فقط AppError و فرزندانش رو raise می‌کنه         │
+│                                                     │
+│  auth_service.py                                    │
+│  order_service.py                                   │
+│  assignment_service.py  ← مهم‌ترین، race condition  │
+│  driver_service.py                                  │
+└──────────┬──────────────────────┬───────────────────┘
+           │                      │
+           ▼                      ▼
+┌──────────────────┐   ┌──────────────────────────────┐
+│   DATABASE LAYER │   │         CACHE LAYER          │
+│   app/db/        │   │         app/db/              │
+│                  │   │                              │
+│  session.py      │   │  redis.py                    │
+│  - connection    │   │  - driver location (GEO)     │
+│    pool          │   │  - distributed lock          │
+│  - transaction   │   │  - notifications             │
+│                  │   │                              │
+│  PostgreSQL      │   │  Redis                       │
+└──────────┬───────┘   └──────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────────┐
+│                 MODEL LAYER                         │
+│               app/models/                           │
+│                                                     │
+│  - ساختار جداول دیتابیس                            │
+│  - رابطه بین جداول                                  │
+│  - index ها                                         │
+│                                                     │
+│  user.py / driver.py / order.py                    │
+└─────────────────────────────────────────────────────┘
+
+
+
+قانون اصلی — هر لایه فقط با لایه زیرش حرف می‌زنه:
+
+
+API       →  فقط Service رو می‌شناسه
+Service   →  فقط DB و Models رو می‌شناسه  
+Models    →  فقط Base و Config رو می‌شناسه
+
+
+چیزهایی که بین همه لایه‌ها مشترکن:
+
+
+app/core/
+├── config.py      ← همه لایه‌ها settings رو می‌خونن
+├── exceptions.py  ← همه لایه‌ها exception می‌دن و می‌گیرن
+├── security.py    ← JWT و bcrypt
+└── logging.py     ← همه لایه‌ها log می‌زنن
+
+
+یه مثال کامل از بالا به پایین:
+
+
+کاربر: POST /api/v1/orders/{id}/assign
+              ↓
+API layer:    درخواست رو می‌گیره، token رو چک می‌کنه
+              AssignmentService رو صدا می‌زنه
+              ↓
+Service:      order رو از DB می‌گیره
+              راننده‌های نزدیک رو از Redis می‌گیره
+              lock می‌گیره
+              تخصیص می‌ده
+              اگه مشکل بود → OrderAlreadyAssignedError
+              ↓
+API layer:    AppError رو می‌گیره
+              to_http_exception() صدا می‌زنه
+              ↓
+کاربر:        HTTP 409 + {"code": "ORDER_ALREADY_ASSIGNED", ...}
+
+
+------------------------------------------------------------------------------
+
+┌──────────┐    ┌──────────┐    ┌───────────┐    ┌───────────┐
+│ PENDING  │───▶│ ASSIGNED │───▶│ PICKED_UP │───▶│ DELIVERED │
+└──────────┘    └──────────┘    └───────────┘    └───────────┘
+     │               │
+     ▼               ▼
+┌──────────┐    ┌──────────┐
+│CANCELLED │    │CANCELLED │  ← در هر مرحله امکان لغو وجود دارد
+└──────────┘    └──────────┘
+
+------------------------------------------------------------------------------
+
+# مدل اصلی (Domain Model)
+class Location(BaseModel):
+    ...
+
+# DTO برای ایجاد (Create Request)
+class LocationCreateRequest(BaseModel):
+    ...
+
+# DTO برای بروزرسانی (Update Request)  
+class LocationUpdateRequest(BaseModel):
+    ...
+
+# DTO برای پاسخ به کلاینت (Response)
+class LocationResponse(BaseModel):
+    ...
+
+---------------------------------------------------------------------------
+
+
+# این یک مدل کامل و مستقل است
+class LocationSchema(BaseModel):
+    lat: float
+    lng: float
+    address: str
+    province: str
+    city: str
+    postal_code: Optional[str]
+
+# این فقط برای دریافت درخواست از کاربر است
+class TableCreateRequest(BaseModel):
+    restaurant_id: UUID
+    table_number: str
+    capacity: int
+    table_type: TableType
+    location_description: Optional[str]  # توجه: فقط توضیح، نه خود موقعیت!
+    is_active: bool
+    min_booking_time: int
+
+--------------------------------------------------------------------------------------
+سه گانه schema و service و api:
+
+
+
+# ============================================
+# در فایل schemas/order.py
+# ============================================
+from pydantic import BaseModel, Field     #همیشه در schema از pydantic استفاده می کنیم
+
+class OrderCreateRequest(BaseModel):
+    ...
+
+class OrderResponse(BaseModel):
+    ...
+
+# ============================================
+# در فایل services/order_service.py
+# ============================================
+from app.models.order import Order  # ← مدل
+from app.schemas.order import OrderCreateRequest, OrderResponse  # ← اسکیما
+from sqlalchemy.ext.asyncio import AsyncSession
+
+class OrderService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+    
+    async def create_order(self, data: OrderCreateRequest, user: User) -> Order:
+        # ۱. داده Schema رو می‌گیره
+        # ۲. تبدیل به Model می‌کنه
+        order = Order(
+            customer_id=user.id,
+            pickup_location=data.pickup_location.model_dump(),
+            dropoff_location=data.dropoff_location.model_dump(),
+            cargo_description=data.cargo_description,
+        )
+        # ۳. ذخیره در دیتابیس
+        self.db.add(order)
+        await self.db.commit()
+        await self.db.refresh(order)
+        # ۴. Model رو برمی‌گردونه
+        return order
+
+# ============================================
+# در فایل api/v1/endpoints/orders.py
+# ============================================
+from app.schemas.order import OrderCreateRequest, OrderResponse  # ← اسکیما
+from app.services.order_service import OrderService  # ← سرویس
+from app.models.user import User  # ← مدل (برای نوع‌دهی)
+
+@router.post("/orders", response_model=OrderResponse)
+async def create_order(
+    data: OrderCreateRequest,  # ← ورودی از Schema
+    current_user: User = Depends(get_current_user),  # ← مدل
+    db: AsyncSession = Depends(get_db),  # ← دیتابیس
+):
+    service = OrderService(db)  # ← ساخت سرویس
+    order = await service.create_order(data, current_user)  # ← صدا زدن سرویس
+    return order  # ← خروجی (Model) که FastAPI به Schema تبدیل می‌کنه
+
+------------------------------------------------------------------------
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                           کلاینت (JSON)                            │
+│  {                                                               │
+│    "pickup_location": {...},                                    │
+│    "cargo_description": "..."                                   │
+│  }                                                              │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    لایه API (Endpoint)                             │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  @router.post("/orders")                                    │ │
+│  │  data: OrderCreateRequest  ← از Schema استفاده می‌کنه      │ │
+│  │  response_model=OrderResponse  ← از Schema استفاده می‌کنه  │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│  وظیفه: دریافت درخواست، صدا زدن سرویس، برگرداندن پاسخ           │
+│  ارتباط با: ✅ Schema (ورودی/خروجی)                             │
+│              ✅ Service (برای انجام کار)                         │
+│              ❌ دیتابیس (مستقیم نه!)                            │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    لایه Service (Business Logic)                   │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  class OrderService:                                        │ │
+│  │      async def create_order(data: OrderCreateRequest):      │ │
+│  │          # ۱. بررسی اعتبارسنجی کسب‌وکار                    │ │
+│  │          # ۲. ساخت Model از روی Schema                      │ │
+│  │          # ۳. ذخیره در دیتابیس                             │ │
+│  │          # ۴. برگرداندن Model                               │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│  وظیفه: منطق کسب‌وکار                                          │
+│  ارتباط با: ✅ Schema (ورودی می‌گیره)                          │
+│              ✅ Model (برای ذخیره‌سازی)                         │
+│              ✅ دیتابیس (از طریق Session)                       │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    لایه Model (SQLAlchemy)                         │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │  class Order(Base):                                         │ │
+│  │      __tablename__ = "orders"                               │ │
+│  │      id = Column(UUID, primary_key=True)                    │ │
+│  │      pickup_location = Column(JSONB)                        │ │
+│  │      cargo_description = Column(String)                     │ │
+│  └───────────────────────────────────────────────────────────────┘ │
+│  وظیفه: نگاشت به جدول دیتابیس                                   │
+│  ارتباط با: ✅ دیتابیس (PostgreSQL)                             │
+└─────────────────────────────────────────────────────────────────────┘
+
+-------------------------------------------------------------------------------
+
+📌 دسته‌بندی پارامترها:
+
+1-3: "داده‌های ورودی از کاربر"
+   ↓
+   lat, lng, radius_km
+   → اینها در URL به صورت query string می‌آیند:
+   GET /nearby?lat=35.7&lng=51.4&radius_km=10
+
+4: "کاربر فعلی" (از توکن احراز هویت)
+   ↓
+   current_user: User = Depends(require_roles(...))
+   → این از هدر Authorization می‌آید، نه از URL!
+   کاربر لاگین کرده و توکنش را ارسال کرده
+
+5-6: "سرویس‌های زیرساختی"
+   ↓
+   db: AsyncSession = Depends(get_db)
+   redis: Redis = Depends(get_redis)
+   → اینها اتصال به دیتابیس و Redis هستند
+   → در درخواست دیده نمی‌شوند، FastAPI آنها را مدیریت می‌کند
+
+
+
+
+GET /api/v1/nearby?lat=35.7&lng=51.4&radius_km=10
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+
+
+@router.get("/nearby")
+async def get_nearby_drivers(
+    lat: float,                              # ← 1. Query Parameter
+    lng: float,                              # ← 2. Query Parameter
+    radius_km: float = 5.0,                  # ← 3. Query Parameter با مقدار پیش‌فرض
+    current_user: User = Depends(...),       # ← 4. Dependency (اجرای تابع)
+    db: AsyncSession = Depends(get_db),      # ← 5. Dependency
+    redis: Redis = Depends(get_redis),       # ← 6. Dependency
+):
+
+
+
+چند نوع پارامتر در FastAPI داریم؟
+
+1. Path Parameters (در خود مسیر)
+
+@router.get("/users/{user_id}")
+async def get_user(user_id: int):  # ← از مسیر می‌آید
+    return {"user_id": user_id}
+
+# درخواست: GET /users/123
+# user_id = 123
+
+
+2. Query Parameters (بعد از ? در URL)
+
+@router.get("/users")
+async def get_users(limit: int = 10):  # ← از query string می‌آید
+    return {"limit": limit}
+
+# درخواست: GET /users?limit=5
+# limit = 5
+
+
+3. Request Body (در بدنه درخواست - JSON)
+
+class UserCreate(BaseModel):
+    name: str
+    age: int
+
+@router.post("/users")
+async def create_user(user: UserCreate):  # ← از body می‌آید
+    return user
+
+# درخواست: POST /users
+# Body: {"name": "Ali", "age": 25}
+
+
+4. Dependencies (وابستگی‌ها)
+
+
+@router.get("/profile")
+async def get_profile(
+    current_user: User = Depends(get_current_user)  # ← تابع get_current_user اجرا می‌شود
+):
+    return current_user
+
+
+5. Headers, Cookies, Form Data و...
+----------------------------------------------------------------------
+
+📌 قانون کلی FastAPI:
+┌─────────────────────────────────────────────┐
+│  نوع پارامتر          →  محل دریافت داده    │
+├─────────────────────────────────────────────┤
+│  Pydantic Model       →  Body (JSON)       │
+│  Primitive (str,int..)→  Query Parameter   │
+│  در مسیر ({id})       →  Path Parameter    │
+│  File/UploadFile      →  FormData          │
+└─────────────────────────────────────────────┘
+
+--------------------------------------------------------------------
+
+مثال واقعی از پروژه رستوران:
+
+@router.get("/restaurants")
+async def get_restaurants(
+    city: str | None = None,  # query: ?city=Tehran
+    min_rating: float = 0.0,  # query: ?min_rating=4.5
+    cuisine: str | None = None,  # query: ?cuisine=pizza
+    page: int = 1,  # query: ?page=2
+    limit: int = 10,  # query: ?limit=20
+):
+    """
+    درخواست نمونه:
+    GET /restaurants?city=Tehran&cuisine=pizza&min_rating=4.0&page=1&limit=10
+    """
+    # همه اینا query parameter هستند چون primitive type هستند!
+    return filters
+
+------------------------------------------------------------------------------------    
+
+

@@ -1,0 +1,12 @@
+# Pydantic Settings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env")
+    database_url: str
+
+# FastAPI + SQLAlchemy
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+
+# Redis
+import redis.asyncio as redis

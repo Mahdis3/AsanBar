@@ -1,0 +1,70 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+*.md
+docs/
+mkdocs.yml
+
+# Local development
+.pre-commit-config.yaml
+docker-compose*.yml
+# NOTE: Dockerfile و .dockerignore خودشان را exclude نکن —
+# Docker build context به آن‌ها نیاز دارد (daemon آن‌ها را جداگانه می‌خواند)
+Makefile
+*.pdb
+
+# Logs & databases
+*.log
+logs/
+*.sqlite
+*.db
+
+# Application specific
+.python-version
+.envrc
